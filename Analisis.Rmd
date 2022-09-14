@@ -1,0 +1,392 @@
+---
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, comment=NA)
+```
+\setcounter{page}{11}
+```{r, echo = FALSE}
+# Preparacion de los datos de cara a los modelos:
+prepara_datos <- function(datos_predefinidos){
+  num_rows <- dim(datos_predefinidos)[1]
+  t <- data.frame(t=seq(1:num_rows))
+  datos_predefinidos <- datos_predefinidos[,!names(datos_predefinidos) == 'fecha']
+  datos_predefinidos[['weekday']] <- as.factor(datos_predefinidos[['weekday']])
+  datos_predefinidos[['month']] <- as.factor(datos_predefinidos[['month']])
+  datos_predefinidos[['week']] <- as.factor(datos_predefinidos[['week']])
+  datos_predefinidos[['year']] <- as.factor(datos_predefinidos[['year']])
+
+  datos_predefinidos <- cbind(t, datos_predefinidos)
+  return(datos_predefinidos)
+}
+```
+
+```{r, echo = FALSE, warning=FALSE, include=FALSE}
+library(reticulate)
+library(lubridate)
+library(olsrr)
+library(patchwork) # To display 2 charts together
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(hrbrthemes)
+library(knitr)
+```
+
+```{python, echo = FALSE}
+import pandas as pd
+import datetime as dt
+import xlrd
+from matplotlib import pyplot as plt
+```
+# 3
+## A
+
+Se realiza el preprocesamiento de los datos utilizando pandas:
+
+```{python}
+#Lectura de datos
+datos_2019 = pd.read_excel("Afluencia_Metro_2019.xlsx", skiprows=2)
+datos_2020 = pd.read_excel("Afluencia_Metro.xlsx", skiprows=2)
+datos_2021 = pd.read_excel("Afluencia_2021.xlsx", skiprows=2)
+
+print(f'La base de datos del 2019 tiene dimensiones: {datos_2019.shape}')
+print(f'La base de datos del 2020 tiene dimensiones: {datos_2020.shape}')
+print(f'La base de datos del 2021 tiene dimensiones: {datos_2021.shape}')
+```
+```{python, echo=FALSE}
+# Arreglo fechas dataset 2021
+datos_2021['Unnamed: 0'] = datos_2021['Unnamed: 0'].apply(lambda x: xlrd.xldate.xldate_as_datetime(x, 0))
+```
+
+```{python}
+# Arreglo nombres
+nombres = list(datos_2019.columns)
+nombres[0] = "fecha"
+nombres[1] = "linea"
+nombres[len(nombres)-1] = "total_dia"
+```
+## B
+
+Se concantenan los datos mediante el metodo concat de pandas:
+
+```{python}
+# Union de datos
+datos_juntos = pd.concat([datos_2019, datos_2020, datos_2021])
+# Arreglo nombres
+datos_juntos.columns=nombres
+print(f'Se tiene que los tres conjuntos de datos unidos tienen dimensiones: f{datos_juntos.shape}')
+```
+## C 
+Se realiza un cambio de datos anchos a largos a través del método melt del paquete pandas:
+
+```{python}
+datos = pd.melt(datos_juntos, id_vars=['fecha', 'linea', 'total_dia'],
+                var_name=['hora'], value_name="total_hora")
+```
+Posteriormente se añaden las variables de día, día de la semana, semana, mes y año, adicionalmente se ordenan los datos respecto a la fecha y la hora:
+
+```{python}
+# Dia
+datos['day'] = datos.fecha.dt.day
+# Dia de la semana
+datos['weekday'] = datos.fecha.dt.weekday
+# Semana
+datos['week'] = datos.fecha.dt.isocalendar().week
+# Mes
+datos['month'] = datos.fecha.dt.month
+# Anio
+datos['year'] = datos.fecha.dt.year
+
+# Arreglo registros en mayúscula
+datos['linea'] = datos['linea'].str.upper()
+
+# Arreglo final
+datos = datos[['fecha', 'hora', 'day', 'weekday', 'week', 'month',
+                'year', 'total_hora', 'total_dia', 'linea']]
+datos.sort_values(by =['fecha', 'hora'], inplace=True)
+
+print(f'Se tiene que luego de haber pasado los datos de anchos a largos se obtiene \nun conjunto de datos de medidas: {datos.shape}')
+```
+## D
+
+Se realiza la división de las dos bases de datos, en este caso NO se ordenan ya que en un paso previo fueron ordenados y al dividirse los datos se respeta el orden.
+```{python}
+# Datos linea A
+dat_lin_A = datos[datos['linea'] == 'LÍNEA A']
+# Datos linea B
+dat_lin_B = datos[datos['linea'] == 'LÍNEA B']
+
+print(f'Se tiene que las dimensiones de los datos de la linea A son: {dat_lin_A.shape}\n',
+f'Se tiene que las dimensiones de los datos de la linea B son: {dat_lin_B.shape}')
+```
+## E
+
+El día 23 de marzo de 2020 fue el inicio de la cuarentena en Colombia, en términos de series de tiempo esto puede producir un fenómeno llamado 'inestabilidad estructural' el cuál representa un cambio abrupto en el comportamiento de una serie de tiempo, se calculan los promedios de pasajeros por hora según el día de la semana antes y después de la cuarentena y se grafican en un gráfico de lineas:
+
+```{python}
+# Registros antes del 23 de marzo de 2020
+lin_A_before = dat_lin_A[dat_lin_A['fecha'] < '2020-03-23']
+lin_B_before = dat_lin_B[dat_lin_B['fecha'] < '2020-03-23']
+# Registros despues del 23 de marzo de 2020
+lin_A_after = dat_lin_A[dat_lin_A['fecha'] >= '2020-03-23']
+lin_B_after = dat_lin_B[dat_lin_B['fecha'] >= '2020-03-23']
+```
+
+Se grafica el comportamiento de la linea A antes y después de la cuarentena:
+
+```{python, echo=FALSE}
+f = plt.figure()
+f.set_figwidth(15)
+f.set_figheight(5)
+lin_A_before.groupby('weekday')['total_hora'].mean().plot(label='Antes de cuarentena')
+lin_A_after.groupby('weekday')['total_hora'].mean().plot(label='Después de cuarentena')
+plt.legend(loc="upper left")
+plt.title('Comportamiento de la linea A antes y después de la cuarentena')
+```
+
+Se grafica el comportamiento de la linea B antes y después de la cuarentena:
+
+```{python, echo=FALSE}
+f = plt.figure()
+f.set_figwidth(15)
+f.set_figheight(5)
+lin_B_before.groupby('weekday')['total_hora'].mean().plot(label='Antes de cuarentena')
+lin_B_after.groupby('weekday')['total_hora'].mean().plot(label='Después de cuarentena')
+plt.legend(loc="upper left")
+plt.title('Comportamiento de la linea B antes y después de la cuarentena')
+```
+
+En ambas gráficas de líneas se observa cómo claramente se tiene una cantidad promedio constante de pasajeros por hora en los días de la semana, además que se observa que disminuye el número de pasajeros por hora en los días sábados y domingos.
+
+Una primer hipótesis para este comportamiento es suponer que en los fines de semana al haber menos personas trabajando se tiene un flujo más bajo de pasajeros en las líneas A y B del metro.
+
+## F
+
+Se obtienen dos nuevos conjuntos de datos que contienen las variables fecha, día, día de la semana, semana, mes, año y total de pasajeros por día seleccionando dichas variables y usando el método drop_duplicates de pandas:
+```{python}
+# Datos por dia
+dat_lin_A_day = dat_lin_A[['fecha', 'day', 'weekday', 'week', 'month', 'year', 'total_dia']].\
+drop_duplicates()
+dat_lin_B_day = dat_lin_B[['fecha', 'day', 'weekday', 'week', 'month', 'year', 'total_dia']].\
+drop_duplicates()
+
+print(f'Dimensiones linea A por día: {dat_lin_A_day.shape}\n',
+f'Dimensiones linea B por día: {dat_lin_B_day.shape}')
+```
+
+## G
+Se grafica la serie de tiempo de la línea A:
+
+```{python, echo=FALSE}
+f = plt.figure()
+f.set_figwidth(15)
+f.set_figheight(5)
+plt.plot(dat_lin_A_day['fecha'], dat_lin_A_day['total_dia'])
+plt.title('Cantidad de pasajeros por día en línea A')
+```
+
+Se grafica la serie de tiempo de la línea B:
+  
+```{python, echo=FALSE}
+f = plt.figure()
+f.set_figwidth(15)
+f.set_figheight(5)
+plt.plot(dat_lin_B_day['fecha'], dat_lin_B_day['total_dia'])
+plt.title('Cantidad de pasajeros por día en línea B')
+```
+
+Tanto la serie de la línea A cómo en la serie de la línea B se observan indicios de 'inestabilidad estructural', indicando así que hasta el 23 de marzo de 2020 las series tenían un comportamiento y después del 23 de marzo de 2020 las series tomaron otro comportamiento, en general se tiene que, para ambas series:
+
+* Hasta el 23 de marzo de 2020 se tenía un comportamiento netamente estacional, sin ninguna tendencia, en dónde siempre había un decaimiento de los pasajeros por día en los días domingos y una menor cantidad de pasajeros a finales del 2019 e inicios del 2020.
+
+* Después del 23 de marzo de 2020 la serie cambia su comportamiento teniendo una caída en la cantidad de pasajeros por día y añadiendo una componente de tendencia, obteniendo así que la cantidad de pasajeros oscila y disminuye en los fines de semana conservando un comportamiento al alza a través de las semanas.
+
+## H
+Se divide cada conjunto de datos respecto a la fecha en la que inició la cuarentena en el país:
+```{python}
+# Division de datos segun fecha de pandemia
+dat_lin_A_day_before = dat_lin_A_day[dat_lin_A_day['fecha'] < '2020-03-23']
+dat_lin_B_day_before = dat_lin_B_day[dat_lin_B_day['fecha'] < '2020-03-23']
+dat_lin_A_day_after = dat_lin_A_day[dat_lin_A_day['fecha'] >= '2020-03-23']
+dat_lin_B_day_after = dat_lin_B_day[dat_lin_B_day['fecha'] >= '2020-03-23']
+```
+
+Se grafican los datos con el fin de realizar así un análisis descriptivo:
+
+```{python, echo=FALSE}
+f = plt.figure()
+f.set_figwidth(30)
+f.set_figheight(20)
+
+ax1 = plt.subplot(2, 2, 1)
+ax1.plot(dat_lin_A_day_before['fecha'], dat_lin_A_day_before['total_dia'])
+ax1.set_title("Linea A antes de cuarentena")
+
+ax2 = plt.subplot(2, 2, 2)
+ax2.plot(dat_lin_B_day_before['fecha'], dat_lin_B_day_before['total_dia'])
+ax2.set_title("Linea B antes de cuarentena")
+
+ax3 = plt.subplot(2, 2, 3)
+ax3.plot(dat_lin_A_day_after['fecha'], dat_lin_A_day_after['total_dia'])
+ax3.set_title("Linea A después de cuarentena")
+
+ax4 = plt.subplot(2, 2, 4)
+ax4.plot(dat_lin_B_day_after['fecha'], dat_lin_B_day_after['total_dia'])
+ax4.set_title("Linea B después de cuarentena")
+```
+
+Claramente en las cuatro gráficas se puede observar:
+
+* Qué en la línea A se tiene un flujo de pasajeros mucho más alto que en la línea B tanto cómo antes cómo después del día de la cuarentena (23 de marzo de 2020)
+* Qué sí se separan los conjuntos de datos de la línea A y de la línea B se obtienen dos series de tiempo diferentes para cada línea en dónde antes de la cuarentena se tiene un comportamiento estacionario y después de la pandemia se tiene un comportamiento estacionario con tendencia.
+
+A partir de las conclusiones anteriores se plantea que algún posible modelo para cada conjunto de datos sería:
+
+* Para antes del día de la cuarentena un modelo estacional con categóricas asociadas al día de la semana.
+* Para después del día de la cuarentena un modelo estacional con tendencia, en donde la estacionalidad se asocie al día de la semana.
+
+```{python, echo=FALSE}
+# Exportar a datos a csv
+dat_lin_A_day_before.to_csv("dat_lin_A_day_before.csv", index=False)
+dat_lin_B_day_before.to_csv("dat_lin_B_day_before.csv", index=False)
+dat_lin_A_day_after.to_csv("dat_lin_A_day_after.csv", index=False)
+dat_lin_B_day_after.to_csv("dat_lin_B_day_after.csv", index=False)
+```
+
+```{r, echo=FALSE}
+# Cargar datos en R
+dat_lin_A_day_before = read.csv("dat_lin_A_day_before.csv")
+dat_lin_B_day_before = read.csv("dat_lin_B_day_before.csv")
+dat_lin_A_day_after = read.csv("dat_lin_A_day_after.csv")
+dat_lin_B_day_after = read.csv("dat_lin_B_day_after.csv")
+```
+
+```{r, include=FALSE}
+dat_lin_A_day_before$fecha <- as.Date(dat_lin_A_day_before$fecha)
+dat_lin_B_day_before$fecha <- as.Date(dat_lin_B_day_before$fecha)
+dat_lin_A_day_after$fecha <- as.Date(dat_lin_A_day_after$fecha)
+dat_lin_B_day_after$fecha <- as.Date(dat_lin_B_day_after$fecha)
+```
+
+```{r, include=FALSE}
+dat_lin_A_day_before_prep <- prepara_datos(dat_lin_A_day_before)
+dat_lin_B_day_before_prep <- prepara_datos(dat_lin_B_day_before)
+dat_lin_A_day_after_prep <- prepara_datos(dat_lin_A_day_after)
+dat_lin_B_day_after_prep <- prepara_datos(dat_lin_B_day_after)
+```
+
+
+
+## Modelamiento para lineas antes de cuarentena
+
+Se plantean los modelos con todas las variables regresoras con el fin de obtener una tabla con todos los modelos posibles mediante el paquete olss, a cada tabla se le añaden los dos modelos que tengan el r-cuadrado ajustado más alto y el aic más bajo:
+
+```{r, echo=FALSE}
+# Plantear modelos base
+mod_A_day_before <- lm(total_dia ~ t + weekday + month + week + year + day,
+                       data = dat_lin_A_day_before_prep)
+mod_B_day_before <- lm(total_dia ~ t + weekday + month + week + year + day,
+                       data = dat_lin_B_day_before_prep)
+mod_A_day_after <- lm(total_dia ~ t + weekday + month + week + year + day,
+                      data = dat_lin_A_day_after_prep)
+mod_B_day_after <- lm(total_dia ~ t + weekday + month + week + year + day,
+                      data = dat_lin_B_day_after_prep)
+```
+
+
+```{r, warning=FALSE, echo=FALSE}
+subset_A_before <- ols_step_all_possible(mod_A_day_before)[c('n', 'predictors', 'adjr', 'aic')]
+subset_B_before <- ols_step_all_possible(mod_B_day_before)[c('n', 'predictors', 'adjr', 'aic')]
+subset_A_after <- ols_step_all_possible(mod_A_day_after)[c('n', 'predictors', 'adjr', 'aic')]
+subset_B_after <- ols_step_all_possible(mod_B_day_after)[c('n', 'predictors', 'adjr', 'aic')]
+```
+
+```{r, echo=FALSE}
+# Agrupamiento de mejores dos modelos con n variables según su r2_adj y su aic:
+subset_A_before <- subset_A_before %>% group_by(n) %>% group_modify(~head(.x, 1)) 
+subset_B_before <- subset_B_before %>% group_by(n) %>% group_modify(~head(.x, 1))
+subset_A_after <- subset_A_after %>% group_by(n) %>% group_modify(~head(.x, 1))
+subset_B_after <- subset_B_after %>% group_by(n) %>% group_modify(~head(.x, 1))
+```
+
+### Linea A antes de cuarentena
+```{r, echo=FALSE}
+kable(subset_A_before)
+```
+En este caso en base a la tabla se tienen 3 modelos candidatos:
+
+De manera similar a la línea A se tienen 3 modelos candidatos:
+
+* Un modelo que sólo incluya el día de la semana
+* Un modelo que incluya el día de la semana y la semana
+* Un modelo que incluya el día de la semana, el mes y la semana.
+
+En este caso respetando el principio de parsimonia, la interpretabilidad del modelo y lo hallado en el análisis descriptivo se plantea un modelo que sólo utiliza el día de la semana como variable regresora para evitar así problemas de sobreajuste:
+
+```{r}
+mod_A_before_final <- lm(total_dia ~ weekday, data = dat_lin_A_day_before_prep)
+summary(mod_A_before_final)
+```
+
+Se obtiene que según la línea del análisis descriptivo previo, todos los niveles de la variable día de la semana son significativos, confirmando así que según el planteamiento inicial de un modelo de regresión lineal múltiple se puede asumir que la serie de la cantidad de pasajeros por día que utilizaron la línea A antes de cuarentena es una serie que tiene parte estacionaria y que no tiene tendencia. En términos comunes se podría decir que hasta el 23 de marzo de 2020 el metro pudo haber previsto el flujo de pasajeros por día en la línea A asumiendo que cada día se tiene un comportamiento constante asociado a los valores predichos en el análisis de regresión.
+
+### Linea B antes de cuarentena
+
+```{r, echo=FALSE}
+kable(subset_B_before)
+```
+De manera similar a la línea A se tienen 3 modelos candidatos:
+
+* Un modelo que sólo incluya el día de la semana
+* Un modelo que incluya el día de la semana y la semana
+* Un modelo que incluya el día de la semana, el mes y la semana.
+
+En este caso respetando el principio de parsimonia, la interpretabilidad del modelo y lo hallado en el análisis descriptivo se plantea un modelo que sólo utiliza el día de la semana como variable regresora para evitar así problemas de sobreajuste:
+
+```{r}
+mod_B_before_final <- lm(total_dia ~ weekday, data = dat_lin_B_day_before_prep)
+summary(mod_B_before_final)
+```
+Se obtiene que según la línea del análisis descriptivo previo, todos los niveles de la variable día de la semana son significativos, confirmando así que según el planteamiento inicial de un modelo de regresión lineal múltiple se puede asumir que la serie de la cantidad de pasajeros por día que utilizaron la línea B antes de cuarentena es una serie que tiene parte estacionaria y que no tiene tendencia. En términos comunes se podría decir que hasta el 23 de marzo de 2020 el metro pudo haber previsto el flujo de pasajeros por día en la línea B asumiendo que cada día se tiene un comportamiento constante asociado a los valores predichos en el análisis de regresión.
+
+
+## Modelamiento para lineas después de cuarentena
+
+### Linea A después de cuarentena
+
+```{r, echo=FALSE}
+kable(subset_A_after)
+```
+En la línea A después de cuarentena se tienen los siguientes 2 modelos candidatos:
+
+* Un modelo que incluya el tiempo t (la unidad de tiempo utilizada para modelar la serie).
+* Un modelo que incluya el tiempo t y el día de la semana.
+
+Utilizando este criterio y siguiendo la línea de los análisis descriptivos se plantea un modelo en dónde se incluye el tiempo t y el día de la semana para recoger lo que es tendencia y estacionalidad:
+
+```{r}
+mod_A_after_final <- lm(total_dia ~ t + weekday, data = dat_lin_A_day_after_prep)
+summary(mod_A_after_final)
+```
+Se obtiene que tanto la componente t asociada a la tendencia como todos los niveles de la variable día de la semana son significativos, confirmando así que según el planteamiento inicial de un modelo de regresión lineal múltiple se puede asumir que la serie de la cantidad de pasajeros por día que utilizan la línea después de cuarentena es una serie que tiene tendencia y es estacionaria.
+
+### Linea B después de cuarentena
+
+```{r, echo=FALSE}
+kable(subset_B_after)
+```
+De manera similar a la línea A se tienen 2 modelos candidatos:
+
+* Un modelo que incluya el tiempo t (la unidad de tiempo utilizada para modelar la serie).
+* Un modelo que incluya el tiempo t y el día de la semana.
+
+Utilizando este criterio y siguiendo la línea de los análisis descriptivos se plantea un modelo en dónde se incluye el tiempo t y el día de la semana para recoger lo que es tendencia y estacionalidad:
+
+```{r}
+mod_b_after_final <- lm(total_dia ~ t + weekday, data = dat_lin_B_day_after_prep)
+summary(mod_b_after_final)
+```
+Se obtiene que tanto la componente t asociada a la tendencia como todos los niveles de la variable día de la semana, a excepción del día sábado son significativos, confirmando así que según el planteamiento inicial de un modelo de regresión lineal múltiple se puede asumir que la serie de la cantidad de pasajeros por día que utilizan la línea después de cuarentena es una serie que tiene tendencia y es estacionaria.
+
